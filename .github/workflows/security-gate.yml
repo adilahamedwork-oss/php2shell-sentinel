@@ -1,0 +1,80 @@
+name: DevSecOps Vulnerability & Remediation Gate
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  test-and-scan:
+    name: Verify Security Gates and Build Audit Evidence
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install Aquasec Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Build Both Container Targets
+        run: |
+          docker build -t php2shell:vuln -f docker/vulnerable.Dockerfile .
+          docker build -t php2shell:patched -f docker/patched.Dockerfile .
+
+      - name: Test Negative Case (Verify Security Gate Correctly Blocks Vulnerable Image)
+        run: |
+          chmod +x scripts/verify_policy.sh
+          echo "Running policy check on vulnerable target (Expecting Exit Code 1)..."
+          if ./scripts/verify_policy.sh php2shell:vuln; then
+            echo "[-] ERROR: Security gate failed to catch the vulnerable PHP 8.3.35 runtime!"
+            exit 1
+          else
+            echo "[+] SUCCESS: Security gate caught and rejected vulnerable runtime as designed."
+          fi
+
+      - name: Test Positive Case (Verify Security Gate Allows Patched Image)
+        run: |
+          echo "Running policy check on patched target (Expecting Exit Code 0)..."
+          ./scripts/verify_policy.sh php2shell:patched
+
+      - name: Execute Trivy Scan on Vulnerable Container
+        run: |
+          trivy image --format json --output trivy-vuln-report.json php2shell:vuln || true
+
+      - name: Execute Trivy Scan on Patched Container
+        run: |
+          trivy image --format json --output trivy-patched-report.json php2shell:patched || true
+
+      - name: Generate Public Audit Dashboard
+        run: |
+          python3 scripts/generate_report.py
+
+      - name: Upload Artifact for GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public/
+
+  deploy-report:
+    name: Publish Security Dashboard
+    needs: test-and-scan
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
