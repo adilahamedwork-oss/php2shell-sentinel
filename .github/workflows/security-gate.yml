@@ -3,10 +3,12 @@ name: DevSecOps Vulnerability & Remediation Gate
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -63,6 +65,7 @@ jobs:
           python3 scripts/generate_report.py
 
       - name: Upload Artifact for GitHub Pages
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: public/
@@ -70,16 +73,18 @@ jobs:
   deploy-report:
     name: Publish Security Dashboard
     needs: test-and-scan
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
 
-  permissions:
-      contents: read
+    permissions:
+      contents: write
       pages: write
       id-token: write
 
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
